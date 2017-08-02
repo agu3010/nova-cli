@@ -1,0 +1,338 @@
+#!/usr/bin/env python3
+
+import os
+import io
+import sys
+import json
+import tarfile
+import daiquiri
+import logging
+import functools
+import configparser
+import argparse
+import requests
+import xdg.BaseDirectory
+
+
+class ApiError(Exception):
+    def __init__(self, response):
+        self.response = response
+
+    @staticmethod
+    def raise_on_error(response):
+        if response.status_code != 200:
+            raise ApiError(response)
+
+
+class Api(object):
+    def __init__(self, config):
+        self.config = config
+        self.remote = config.get('core', 'remote')
+        self.token = config.get('core', 'token')
+
+    @property
+    def headers(self):
+        if self.token is None:
+            raise RuntimeError("No token specified")
+
+        return {'Auth-Token': self.token}
+
+    def url(self, *elements):
+        if not self.remote:
+            raise RuntimeError("No remote specified")
+
+        return '{}/{}'.format(self.remote, '/'.join(elements))
+
+    def post(self, *url_elements, **kwargs):
+        return requests.post(self.url(*url_elements), headers=self.headers, **kwargs)
+
+    def get(self, *url_elements, **kwargs):
+        return requests.get(self.url(*url_elements), headers=self.headers, **kwargs)
+
+    def create_dataset(self, collection, name):
+        r = self.post('api/datasets', data=dict(name=name, collection=collection))
+        ApiError.raise_on_error(r)
+
+    def push(self, collection, dataset, data):
+        r = self.post('api/datasets', collection, dataset, 'data', data=data)
+        ApiError.raise_on_error(r)
+
+    def clone(self, collection, dataset):
+        r = self.get('api/datasets', collection, dataset, 'data')
+        ApiError.raise_on_error(r)
+        return io.BytesIO(r.content)
+
+    def search(self, query):
+        params = {'q': query}
+        r = self.get('api/search', params=params)
+        ApiError.raise_on_error(r)
+        return r.json()
+
+    def list(self):
+        r = self.get('api/datasets')
+        ApiError.raise_on_error(r)
+        return r.json()
+
+
+
+
+def load_config(path):
+    config = configparser.ConfigParser()
+    logging.debug("Reading {}".format(path))
+    config.read(path)
+
+    if 'core' not in config:
+        config['core'] = {}
+
+    return config
+
+
+def load_global_config():
+    path = os.path.join(xdg.BaseDirectory.load_first_config('nova'), 'config')
+    return path, load_config(path)
+
+
+def local_config_path():
+    return os.path.abspath(os.path.join('.nova', 'config'))
+
+
+def load_local_config():
+    path = local_config_path()
+    return path, load_config(path)
+
+
+def local_config_exists():
+    return os.path.exists(local_config_path())
+
+
+def write_config(config, path):
+    dir_path = os.path.split(path)[0]
+
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
+
+    with open(path, 'w') as f:
+        config.write(f)
+
+
+def parse_configs(f):
+    @functools.wraps(f)
+    def wrapper(args):
+        _, global_config = load_global_config()
+        _, local_config = load_local_config()
+
+        config = configparser.ConfigParser()
+        config['core'] = {}
+
+        for key in global_config['core']:
+            config['core'][key] = global_config['core'][key]
+
+        for key in local_config['core']:
+            config['core'][key] = local_config['core'][key]
+
+        # now override with arguments
+        d = vars(args)
+
+        if 'remote' in d and d['remote'] is not None:
+            config['core']['remote'] = d['remote']
+
+        if 'token' in d and d['token'] is not None:
+            config['core']['token'] = d['token']
+
+        return f(args, config)
+
+    return wrapper
+
+
+def cmd_config(args):
+    section, key = args.option
+    d = vars(args)
+    path, config = load_global_config() if d['global'] else load_local_config()
+
+    if args.value is None:
+        if not section in config:
+            raise ValueError("Section `{}' does not exists".format(section))
+
+        if not key in config[section]:
+            raise ValueError("Key `{}' does not exists".format(key))
+
+        print(config[section][key])
+    else:
+        if not section in config:
+            config[section] = {}
+
+        config[section][key] = args.value
+        write_config(config, path)
+
+
+@parse_configs
+def cmd_search(args, config):
+    api = Api(config)
+
+    for result in api.search(args.query):
+        print("{}/{}/{}".format(result['owner'], result['collection'], result['name']))
+
+
+@parse_configs
+def cmd_list(args, config):
+    api = Api(config)
+
+    for result in api.list():
+        print("{}".format(result['name']))
+
+
+@parse_configs
+def cmd_init(args, config):
+    if local_config_exists():
+        raise RuntimeError("Dataset already initialized")
+
+    if args.name is not None:
+        config['core']['name'] = args.name
+    else:
+        config['core']['name'] = os.path.basename(os.path.abspath(os.curdir))
+
+    config['core']['collection'] = args.collection
+
+    api = Api(config)
+    api.create_dataset(config['core']['collection'], config['core']['name'])
+    write_config(config, local_config_path())
+
+
+@parse_configs
+def cmd_push(args, config):
+    def create_tar(path):
+        fileobj = io.BytesIO()
+        tar = tarfile.open(mode='w:gz', fileobj=fileobj)
+
+        for root, dirs, files in os.walk(path):
+            for fn in files:
+                p = os.path.join(root, fn)
+
+                # remove one more character to remove trailing slash
+                arcname = p[p.find(path)+len(path)+1:]
+
+                if not arcname.startswith('.nova/config'):
+                    tar.add(p, arcname=arcname)
+
+        tar.close()
+        return fileobj
+
+    f = create_tar(os.path.abspath('.'))
+    f.seek(0)
+
+    api = Api(config)
+    api.push(config['core']['collection'], config['core']['name'], f)
+
+
+@parse_configs
+def cmd_clone(args, config):
+    def extract_tar(fileobj, path):
+        fileobj.seek(0)
+        tar = tarfile.open(mode='r:gz', fileobj=fileobj)
+        tar.extractall(path)
+        tar.close()
+
+    collection, dataset = args.identifier
+
+    api = Api(config)
+    f = api.clone(collection, dataset)
+    extract_tar(f, os.path.join(os.path.abspath('.'), dataset))
+
+    config['core']['collection'] = collection
+    config['core']['name'] = dataset
+    write_config(config, os.path.join(config['core']['name'], local_config_path()))
+
+
+def check_section_key(value):
+    try:
+        s = value.split('.')
+
+        if len(s) == 2:
+            return s[0], s[1]
+    except:
+        pass
+
+    raise argparse.ArgumentTypeError("{} is not a valid option".format(args.option))
+
+
+def check_dataset_identifier(value):
+    try:
+        s = value.split('/')
+        
+        if len(s) == 2:
+            return s[0], s[1]
+    except:
+        pass
+    raise argparse.ArgumentTypeError("Dataset must be specified as `collection/dataset'")
+
+
+def main():
+    def add_remote_and_token_args(parser):
+        parser.add_argument('--remote', type=str, help="URL of remote NOVA instance")
+        parser.add_argument('--token', type=str, help="Access token")
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--verbose', action='store_true', help="output debug messages")
+
+    cmd_parsers = parser.add_subparsers(title="Commands")
+
+    config_parser = cmd_parsers.add_parser('config',
+            help="Get and set local and global options")
+    config_parser.add_argument('--global', action='store_true',
+            help="Read and write from and to global configuration file")
+    config_parser.add_argument('option',
+            type=check_section_key,
+            help="Option to get or set")
+    config_parser.add_argument('value', nargs='?',
+            help="Value for the option")
+    config_parser.set_defaults(run=cmd_config)
+
+    init_parser = cmd_parsers.add_parser('init',
+            help="Initialize collection in current directory")
+    init_parser.add_argument('--name', type=str,
+            help="Dataset name, if not given current directory name")
+    init_parser.add_argument('--collection',type=str, required=True,
+            help="Collection the dataset belongs to")
+    init_parser.set_defaults(run=cmd_init)
+    add_remote_and_token_args(init_parser)
+
+    push_parser = cmd_parsers.add_parser('push',
+            help="Finalize data and push to remote")
+    push_parser.set_defaults(run=cmd_push)
+    add_remote_and_token_args(push_parser)
+
+    clone_parser = cmd_parsers.add_parser('clone',
+            help="Clone dataset")
+    clone_parser.add_argument('identifier', type=check_dataset_identifier,
+            metavar="collection/dataset",
+            help="Dataset identifier")
+    clone_parser.set_defaults(run=cmd_clone)
+    add_remote_and_token_args(clone_parser)
+
+    search_parser = cmd_parsers.add_parser('search',
+            help="Search for datasets")
+    search_parser.add_argument('query', type=str,
+            help="Query string")
+    search_parser.set_defaults(run=cmd_search)
+    add_remote_and_token_args(search_parser)
+
+    list_parser = cmd_parsers.add_parser('list',
+            help="List datasets assigned to me")
+    list_parser.set_defaults(run=cmd_list)
+    add_remote_and_token_args(list_parser)
+
+    args = parser.parse_args()
+
+    log_formatter = daiquiri.formatter.ColorFormatter(fmt="%(color)s%(levelname)-8.8s %(message)s%(color_stop)s")
+    log_output = daiquiri.output.Stream(formatter=log_formatter)
+    daiquiri.setup(level=logging.DEBUG if args.verbose else logging.INFO,
+            outputs=(log_output,))
+
+    try:
+        args.run(args)
+    except Exception as e:
+        logging.error(str(e))
+
+
+if __name__ == '__main__':
+    main()
