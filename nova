@@ -240,7 +240,9 @@ def cmd_clone(args, config):
 
     config['core']['collection'] = collection
     config['core']['name'] = dataset
-    write_config(config, os.path.join(config['core']['name'], local_config_path()))
+
+    config_path = os.path.abspath(os.path.join('.', dataset, '.nova', 'config'))
+    write_config(config, config_path)
 
 
 def check_section_key(value):
