@@ -186,6 +186,15 @@ def cmd_list(args, config):
 
 
 @parse_configs
+def cmd_create(args, config):
+    name = args.name
+    collection = config['core']['collection'] or name
+
+    api = Api(config)
+    api.create_dataset(collection, name)
+
+
+@parse_configs
 def cmd_init(args, config):
     if local_config_exists():
         raise RuntimeError("Dataset already initialized")
@@ -292,6 +301,17 @@ def main():
     config_parser.add_argument('value', nargs='?',
             help="Value for the option")
     config_parser.set_defaults(run=cmd_config)
+
+    create_parser = cmd_parsers.add_parser('create',
+            help="Create a dataset remotely")
+    create_parser.add_argument('--name', type=str, required=True,
+            help="Dataset name")
+    create_parser.add_argument('--collection', type=str,
+            help="Collection name, if not given use dataset name")
+    create_parser.add_argument('--path', type=str,
+            help="Data path")
+    create_parser.set_defaults(run=cmd_create)
+    add_remote_and_token_args(create_parser)
 
     init_parser = cmd_parsers.add_parser('init',
             help="Initialize collection in current directory")
