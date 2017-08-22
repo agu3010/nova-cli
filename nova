@@ -288,7 +288,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--verbose', action='store_true', help="output debug messages")
 
-    cmd_parsers = parser.add_subparsers(title="Commands")
+    cmd_parsers = parser.add_subparsers(title="Commands", dest='commands')
+    cmd_parsers.required = True
 
     config_parser = cmd_parsers.add_parser('config',
             help="Get and set local and global options")
