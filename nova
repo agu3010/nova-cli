@@ -188,6 +188,7 @@ def cmd_list(args, config):
 def cmd_create(args, config):
     name = args.name
     collection = config['core']['collection'] if 'collection' in config['core'] else name
+    collection = args.collection or collection
 
     api = Api(config)
     api.create_dataset(collection, name)
