@@ -139,6 +139,10 @@ def parse_configs(f):
         if 'token' in d and d['token'] is not None:
             config['core']['token'] = d['token']
 
+        for required in ('remote', 'token'):
+            if not required in config['core']:
+                raise ValueError("`{}' not specified".format(required))
+
         return f(args, config)
 
     return wrapper
