@@ -15,13 +15,12 @@ import xdg.BaseDirectory
 
 
 class ApiError(Exception):
-    def __init__(self, response):
-        self.response = response
-
     @staticmethod
     def raise_on_error(response):
         if response.status_code != 200:
-            raise ApiError(response)
+            data = response.json()
+            message = data['error'] if 'error' in data else data['message']
+            raise ApiError(message)
 
 
 class Api(object):
