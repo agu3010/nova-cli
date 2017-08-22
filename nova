@@ -48,8 +48,9 @@ class Api(object):
     def get(self, *url_elements, **kwargs):
         return requests.get(self.url(*url_elements), headers=self.headers, **kwargs)
 
-    def create_dataset(self, collection, name):
-        r = self.post('api/datasets', data=dict(name=name, collection=collection))
+    def create_dataset(self, collection, name, description=None, path=None):
+        data = dict(name=name, collection=collection, description=description, path=path)
+        r = self.post('api/datasets', data=data)
         ApiError.raise_on_error(r)
 
     def push(self, collection, dataset, data):
@@ -191,7 +192,7 @@ def cmd_create(args, config):
     collection = args.collection or collection
 
     api = Api(config)
-    api.create_dataset(collection, name)
+    api.create_dataset(collection, name, args.description, args.path)
 
 
 @parse_configs
@@ -309,6 +310,8 @@ def main():
             help="Dataset name")
     create_parser.add_argument('--collection', type=str,
             help="Collection name, if not given use dataset name")
+    create_parser.add_argument('--description', type=str,
+            help="Description")
     create_parser.add_argument('--path', type=str,
             help="Data path")
     create_parser.set_defaults(run=cmd_create)
