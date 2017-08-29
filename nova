@@ -11,6 +11,7 @@ import functools
 import configparser
 import argparse
 import requests
+import dateutil.parser
 import xdg.BaseDirectory
 
 
@@ -48,8 +49,8 @@ class Api(object):
     def get(self, *url_elements, **kwargs):
         return requests.get(self.url(*url_elements), headers=self.headers, **kwargs)
 
-    def create_dataset(self, collection, name, description=None, path=None):
-        data = dict(name=name, collection=collection, description=description, path=path)
+    def create_dataset(self, collection, name, description=None, path=None, created=None):
+        data = dict(name=name, collection=collection, description=description, path=path, created=created)
         r = self.post('api/datasets', data=data)
         ApiError.raise_on_error(r)
 
@@ -188,6 +189,8 @@ def cmd_list(args, config):
 @parse_configs
 def cmd_create(args, config):
     name = args.name
+    dt = dateutil.parser.parse(args.created) if args.created else None
+    dt = dt.strftime('%Y-%m-%dT%H:%M:%s') if dt else None
     collection = config['core']['collection'] if 'collection' in config['core'] else name
     collection = args.collection or collection
 
@@ -314,6 +317,8 @@ def main():
             help="Description")
     create_parser.add_argument('--path', type=str,
             help="Data path")
+    create_parser.add_argument('--created', type=str,
+            help="Creation time")
     create_parser.set_defaults(run=cmd_create)
     add_remote_and_token_args(create_parser)
 

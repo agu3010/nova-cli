@@ -15,5 +15,6 @@ setup(
         'daiquiri',
         'pyxdg',
         'requests',
+        'python-dateutil',
     ],
 )
