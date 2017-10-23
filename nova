@@ -75,8 +75,6 @@ class Api(object):
         return r.json()
 
 
-
-
 def load_config(path):
     config = configparser.ConfigParser()
     logging.debug("Reading {}".format(path))
