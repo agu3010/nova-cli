@@ -8,11 +8,15 @@ import tarfile
 import daiquiri
 import logging
 import functools
-import configparser
 import argparse
 import requests
 import dateutil.parser
 import xdg.BaseDirectory
+
+try:
+    import configparser
+except ImportError:
+    import ConfigParser as configparser
 
 
 class ApiError(Exception):
