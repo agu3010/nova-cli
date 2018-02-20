@@ -18,7 +18,7 @@ import configparser
 class ApiError(Exception):
     @staticmethod
     def raise_on_error(response):
-        if response.status_code != 200:
+        if response.status_code < 200 or response.status_code >= 300:
             data = response.json()
             message = data['error'] if 'error' in data else data['message']
             raise ApiError(message)
