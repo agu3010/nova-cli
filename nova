@@ -12,11 +12,7 @@ import argparse
 import requests
 import dateutil.parser
 import xdg.BaseDirectory
-
-try:
-    import configparser
-except ImportError:
-    import ConfigParser as configparser
+import configparser
 
 
 class ApiError(Exception):

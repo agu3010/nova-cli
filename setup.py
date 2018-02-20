@@ -16,5 +16,6 @@ setup(
         'pyxdg',
         'requests',
         'python-dateutil',
+        'configparser',
     ],
 )
